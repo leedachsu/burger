@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-<title></title>
+<title>우리들의 햄버거 타워</title>
 <style>
   * { -webkit-tap-highlight-color:transparent; }
   html, body { margin:0; height:100%; background:#e3dccd; font-family:"Malgun Gothic","Apple SD Gothic Neo",sans-serif; overflow:hidden; touch-action:none; }
@@ -107,9 +107,9 @@ let panKey = false;
 
 
 const TYPES = [
-  { name:'생양파', n:9, seg:2.7, thick:8, k:0.42, straight:false, damp:0.25, grip:0.18, color:'#fffdf2', edge:'#a3967c', onion:true, count:3, img:'' },
-  { name:'새우', n:9, seg:2.4, thick:10, k:0.52, straight:false, damp:0.3, grip:0.18, color:'#f2aa7b', edge:'#945131', shrimp:true, count:3, img:'' },
-  { name:'오이피클', n:9, seg:2.4, thick:12, k:0.60, straight:false, damp:0.25, grip:0.2, color:'#acc34e', edge:'#526725', pickle:true, count:2, img:'' },
+  { name:'생양파', n:9, seg:3.105, thick:9.2, k:0.42, straight:false, damp:0.25, grip:0.18, color:'#fffdf2', edge:'#a3967c', onion:true, count:3, img:'' },
+  { name:'새우', n:9, seg:2.76, thick:11.5, k:0.52, straight:false, damp:0.3, grip:0.18, color:'#f2aa7b', edge:'#945131', shrimp:true, count:3, img:'' },
+  { name:'오이피클', n:9, seg:2.76, thick:13.8, k:0.60, straight:false, damp:0.25, grip:0.2, color:'#acc34e', edge:'#526725', pickle:true, count:2, img:'' },
   // 베이컨: 길고 얇으며 살짝 휘어지는 재료. 기존 재료와 같은 확률로 등장합니다.
   { name: '베이컨', n: 13, seg: 7.5, thick: 13, k: 0.97,
     grip: 0.2, damp: 0.48, straight: true, antiCurl: true,
@@ -163,7 +163,7 @@ function spawn(selectedType) {
     const size=count===1?1:(base.onion?[0.78,1.03,0.9][i]:0.88+Math.random()*0.14);
     const type=count===1?base:{...base,seg:base.seg*size,thick:base.thick*size};
     const b=makeBody(type);
-    b.slot=(i-(count-1)/2)*(base.pickle?42:31);
+    b.slot=(i-(count-1)/2)*(base.pickle?48.3:35.65);
     b.slotY=count===1?0:[0,-4,1][i];
     b.tilt=count===1?0:(Math.random()-0.5)*0.16;
     placeHanging(b);turnBodies.push(b);bodies.push(b);
@@ -285,6 +285,27 @@ function step() {
   for(const b of turnBodies){b.panTouch=false;b.supL=Infinity;b.supR=-Infinity;}
   const support=(b,p)=>{b.supL=Math.min(b.supL,p.x);b.supR=Math.max(b.supR,p.x);};
   for (let it = 0; it < 8; it++) {
+    // 같은 차례에 나온 조각들을 보이지 않는 부드러운 연결로 묶습니다.
+    for (let i = 0; i < turnBodies.length - 1; i++) {
+      const A = turnBodies[i], B = turnBodies[i + 1];
+      if (A.hanging || B.hanging || A.missed || B.missed) continue;
+      if (A.frozen && B.frozen) continue;
+      const p = A.pts[A.pts.length - 1], q = B.pts[0];
+      const gap = Math.abs(B.slot - A.slot)
+        - ((A.type.n - 1) * A.type.seg + (B.type.n - 1) * B.type.seg) / 2;
+      const limit = Math.max(6, gap * 1.15);
+      const dx = q.x - p.x, dy = q.y - p.y;
+      const distance = Math.hypot(dx, dy);
+      if (distance <= limit) continue;
+      const force = (distance - limit) / distance * 0.18;
+      const weightA = A.frozen ? 0 : B.frozen ? 1 : 0.5;
+      const weightB = 1 - weightA;
+      p.x += dx * force * weightA;
+      p.y += dy * force * weightA;
+      q.x -= dx * force * weightB;
+      q.y -= dy * force * weightB;
+    }
+
     for (const b of bodies) {
       if (b.frozen || b.hanging) continue;
       const t = b.type, pts = b.pts, rad = t.thick / 2;
@@ -380,7 +401,9 @@ function step() {
   for(const b of turnBodies)if(!b.frozen&&!b.missed&&!b.hanging) {
     let maxV=0;for(const p of b.pts)maxV=Math.max(maxV,Math.hypot(p.x-p.px,p.y-p.py));
     const cx=b.pts.reduce((sum,p)=>sum+p.x,0)/b.pts.length;
-    const touching=b.supL<=b.supR,supported=touching&&cx>=b.supL&&cx<=b.supR;
+    const anchored = turnBodies.some(other => other !== b && other.frozen && !other.missed);
+    const touching = b.supL <= b.supR || anchored;
+    const supported = anchored || (touching && cx >= b.supL && cx <= b.supR);
     b.settle=supported&&maxV<SETTLE_V?b.settle+1:0;
     if(b.settle>SETTLE_FRAMES||(b.flight>SETTLE_TIMEOUT&&touching)){
       b.frozen=true;for(const p of b.pts){p.px=p.x;p.py=p.y;}updateLabels();
