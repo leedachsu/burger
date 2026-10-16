@@ -691,34 +691,22 @@ function specialSprite(type) {
   ingredientSprites.set(key,cropped);return cropped;
 }
 function drawSpecialIngredient(b) {
-  const t=b.type,im=specialSprite(t),w=(t.n-1)*t.seg+t.thick;
-  const h=w*im.naturalHeight/im.naturalWidth;
-  drawSoftImage(b.pts,im,h,t.seg,t.thick/2,Math.min(0,(t.thick-h)/2));
-}
-
-// 작은 조각의 높은 그림도 이음새 없이 휘도록 삼각형 격자로 변형합니다.
-function drawSoftImage(points,image,h,seg,ext,off) {
-  const pts=points.map(p=>({x:p.x,y:p.y})),n=pts.length;
-  for(const [i,j] of [[0,1],[n-1,n-2]]){const a=points[i],b=points[j],len=Math.hypot(a.x-b.x,a.y-b.y)||1;pts[i]={x:a.x+(a.x-b.x)/len*ext,y:a.y+(a.y-b.y)/len*ext};}
-  const vertices=pts.map((p,i)=>{const a=pts[Math.max(0,i-1)],b=pts[Math.min(n-1,i+1)],len=Math.hypot(b.x-a.x,b.y-a.y)||1,nx=-(b.y-a.y)/len,ny=(b.x-a.x)/len;return [{x:p.x+nx*(h/2+off),y:p.y+ny*(h/2+off)},{x:p.x-nx*(h/2-off),y:p.y-ny*(h/2-off)}];});
-  const total=(n-1)*seg+2*ext;
-  const u=i=>i===0?0:i===n-1?image.width:(ext+i*seg)/total*image.width;
-  for(let i=0;i<n-1;i++) {
-    const a=vertices[i],b=vertices[i+1],x=u(i),z=u(i+1),H=image.height;
-    textureTriangle(image,[[x,0],[z,0],[x,H]],[a[0],b[0],a[1]]);
-    textureTriangle(image,[[z,0],[z,H],[x,H]],[b[0],b[1],a[1]]);
-  }
-}
-function textureTriangle(image,s,d) {
-  const u1=s[1][0]-s[0][0],v1=s[1][1]-s[0][1],u2=s[2][0]-s[0][0],v2=s[2][1]-s[0][1],det=u1*v2-u2*v1;
-  if(Math.abs(det)<0.0001)return;
-  const x1=d[1].x-d[0].x,y1=d[1].y-d[0].y,x2=d[2].x-d[0].x,y2=d[2].y-d[0].y;
-  const a=(x1*v2-x2*v1)/det,b=(y1*v2-y2*v1)/det,c=(x2*u1-x1*u2)/det,e=(y2*u1-y1*u2)/det;
-  const tx=d[0].x-a*s[0][0]-c*s[0][1],ty=d[0].y-b*s[0][0]-e*s[0][1];
-  const center={x:(d[0].x+d[1].x+d[2].x)/3,y:(d[0].y+d[1].y+d[2].y)/3};
-  ctx.save();ctx.beginPath();
-  d.forEach((p,i)=>{const dx=p.x-center.x,dy=p.y-center.y,len=Math.hypot(dx,dy)||1,x=p.x+dx/len*0.15,y=p.y+dy/len*0.15;if(i)ctx.lineTo(x,y);else ctx.moveTo(x,y);});
-  ctx.closePath();ctx.clip();ctx.transform(a,b,c,e,tx,ty);ctx.drawImage(image,0,0);ctx.restore();
+  const t=b.type,im=specialSprite(t),pts=b.pts;
+  const a=pts[0],z=pts[pts.length-1],rest=(t.n-1)*t.seg;
+  const span=Math.hypot(z.x-a.x,z.y-a.y);
+  const angle=Math.atan2(z.y-a.y,z.x-a.x);
+  const center=pts.reduce((c,p)=>({x:c.x+p.x/pts.length,y:c.y+p.y/pts.length}),{x:0,y:0});
+  const bend=pts.reduce((sum,p)=>sum+(-(p.x-a.x)*Math.sin(angle)+(p.y-a.y)*Math.cos(angle)),0)/pts.length;
+  // 작은 재료는 통째로 그려 이음새를 없애고, 변형은 좁은 범위로 제한합니다.
+  const squeeze=Math.max(0.9,Math.min(1.035,span/rest));
+  const w=rest+t.thick,h=w*im.height/im.width;
+  const off=Math.min(0,(t.thick-h)/2);
+  const shear=Math.max(-0.08,Math.min(0.08,bend/(rest||1)*0.3));
+  ctx.save();ctx.translate(center.x,center.y);ctx.rotate(angle);
+  ctx.transform(squeeze,shear,0,1+(1-squeeze)*0.4,0,0);
+  ctx.scale(1,-1);
+  ctx.drawImage(im,-w/2,-h/2-off,w,h);
+  ctx.restore();
 }
 
 function strokeRope(pts, w, color) {
