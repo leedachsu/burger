@@ -107,9 +107,9 @@ let panKey = false;
 
 
 const TYPES = [
-  { name:'생양파', n:11, seg:7, thick:16, k:0.78, straight:true, damp:0.3, grip:0.2, color:'#fffdf2', edge:'#a3967c', onion:true, img:'' },
-  { name:'새우', n:13, seg:5.5, thick:15, k:0.40, straight:false, damp:0.55, grip:0.2, color:'#f2aa7b', edge:'#945131', shrimp:true, img:'' },
-  { name:'오이피클', n:11, seg:6.5, thick:17, k:0.85, straight:true, damp:0.3, grip:0.2, color:'#acc34e', edge:'#526725', pickle:true, img:'' },
+  { name:'생양파', n:9, seg:2.7, thick:8, k:0.42, straight:false, damp:0.25, grip:0.18, color:'#fffdf2', edge:'#a3967c', onion:true, count:3, img:'' },
+  { name:'새우', n:9, seg:2.4, thick:10, k:0.52, straight:false, damp:0.3, grip:0.18, color:'#f2aa7b', edge:'#945131', shrimp:true, count:3, img:'' },
+  { name:'오이피클', n:9, seg:2.4, thick:12, k:0.60, straight:false, damp:0.25, grip:0.2, color:'#acc34e', edge:'#526725', pickle:true, count:2, img:'' },
   // 베이컨: 길고 얇으며 살짝 휘어지는 재료. 기존 재료와 같은 확률로 등장합니다.
   { name: '베이컨', n: 13, seg: 7.5, thick: 13, k: 0.97,
     grip: 0.2, damp: 0.48, straight: true, antiCurl: true,
@@ -129,6 +129,7 @@ function ready(im) { return im && im.complete && im.naturalWidth > 0; }
 const LIVES = 3; // 목숨 3개: 세 번째 실패 시 게임 종료
 let lives = LIVES;
 let finishInfo = null;
+let turnBodies = [], turnMissed = false;
 let bodies = [], current = null, next = 0, settle = 0, flight = 0, over = false, topBun = null;
 
 function makeBody(type) {
@@ -137,7 +138,7 @@ function makeBody(type) {
 
 
 
-  const b = { type, pts, hanging: true, hang: 0, thrown: false, frozen: false, inPan: false, air: 0 };
+  const b = { type, pts, hanging: true, hang: 0, thrown: false, frozen: false, inPan: false, air: 0, settle:0, flight:0, missed:false, slot:0, slotY:0, tilt:0 };
   placeHanging(b);
   return b;
 }
@@ -146,22 +147,30 @@ function placeHanging(b) {
   const len = HANG_TO - HANG_FROM, m = b.hang % (len * 2);
 
   const d = dropPoint(pan.x, pan.y, HANG_FROM + (m < len ? m : len * 2 - m)), y = dropPoint(pan.x, pan.y, HANG_FROM).y;
-  const t = b.type, x0 = d.x - (t.n - 1) * t.seg / 2;
-  b.pts.forEach((p, i) => { p.x = p.px = x0 + i * t.seg; p.y = p.py = y; });
+  const t = b.type, half = (t.n-1)*t.seg/2;
+  b.pts.forEach((p,i)=>{const x=i*t.seg-half;p.x=p.px=d.x+b.slot+x*Math.cos(b.tilt);p.y=p.py=y+b.slotY+x*Math.sin(b.tilt);});
 }
 
 function dropCurrent() {
-  if (!current || !current.hanging) return false;
-  current.hanging = false;
-  return true;
+  let dropped=false;
+  for(const b of turnBodies)if(b.hanging){b.hanging=false;dropped=true;}
+  return dropped;
 }
-function spawn() {
-  current = makeBody(TYPES[Math.floor(Math.random() * TYPES.length)]); // fully random every time
-  next++;
-  bodies.push(current);
-  settle = 0; flight = 0;
+function spawn(selectedType) {
+  const base=selectedType || TYPES[Math.floor(Math.random()*TYPES.length)],count=base.count||1;
+  turnMissed=false;turnBodies=[];
+  for(let i=0;i<count;i++) {
+    const size=count===1?1:(base.onion?[0.78,1.03,0.9][i]:0.88+Math.random()*0.14);
+    const type=count===1?base:{...base,seg:base.seg*size,thick:base.thick*size};
+    const b=makeBody(type);
+    b.slot=(i-(count-1)/2)*(base.pickle?42:31);
+    b.slotY=count===1?0:[0,-4,1][i];
+    b.tilt=count===1?0:(Math.random()-0.5)*0.16;
+    placeHanging(b);turnBodies.push(b);bodies.push(b);
+  }
+  current=turnBodies[0];next++;settle=0;flight=0;
 }
-function reset() { lives = LIVES; camY = camTarget = 0; if (viewLeft) { viewLeft = 0; fit(); } bodies = []; current = null; next = 0; over = false; topBun = null; panDrag = null; panKey = false; pan.angle = PAN_REST; pan.w = 0; updatePan(true); result.classList.add('hidden'); spawn(); updateLabels(); }
+function reset() { lives = LIVES; camY = camTarget = 0; if (viewLeft) { viewLeft = 0; fit(); } bodies = []; turnBodies = []; turnMissed = false; current = null; next = 0; over = false; topBun = null; panDrag = null; panKey = false; pan.angle = PAN_REST; pan.w = 0; updatePan(true); result.classList.add('hidden'); spawn(); updateLabels(); }
 function updateLabels() {
   let top = BUN.y;
   for (const b of bodies) if (b.frozen) for (const p of b.pts) top = Math.min(top, p.y - b.type.thick / 2); // fixed pieces only
@@ -265,7 +274,7 @@ function step() {
     }
     return;
   }
-  if (current && current.hanging) { current.hang += HANG_SPEED; placeHanging(current); }
+  for(const b of turnBodies)if(b.hanging&&!b.missed){b.hang+=HANG_SPEED;placeHanging(b);}
   for (const b of bodies) if (!b.frozen && !b.hanging) for (const p of b.pts) {
     let vx = (p.x - p.px) * (1 - DRAG), vy = (p.y - p.py) * (1 - DRAG);
     const sp = Math.hypot(vx, vy);
@@ -273,10 +282,8 @@ function step() {
     p.px = p.x; p.py = p.y; p.x += vx; p.y += vy + GRAV;
   }
   const ax = panAxes();
-  let panTouch = false;
-
-  let supL = Infinity, supR = -Infinity;
-  const support = p => { supL = Math.min(supL, p.x); supR = Math.max(supR, p.x); };
+  for(const b of turnBodies){b.panTouch=false;b.supL=Infinity;b.supR=-Infinity;}
+  const support=(b,p)=>{b.supL=Math.min(b.supL,p.x);b.supR=Math.max(b.supR,p.x);};
   for (let it = 0; it < 8; it++) {
     for (const b of bodies) {
       if (b.frozen || b.hanging) continue;
@@ -300,8 +307,8 @@ function step() {
         // no friction here: it was draining momentum whenever a floppy piece folded mid-air
       }
       for (const p of pts) {
-        if (collideRect(p, rad, BUN)) { p.fr = Math.max(p.fr || 0, BUN_FRICTION); if (b === current && p.y <= BUN.y - rad + 0.5) support(p); }
-        if (collidePan(p, rad, ax) && b === current) panTouch = true;
+        if (collideRect(p, rad, BUN)) { p.fr = Math.max(p.fr || 0, BUN_FRICTION); if (p.y <= BUN.y - rad + 0.5) support(b,p); }
+        if (collidePan(p, rad, ax)) b.panTouch = true;
       }
     }
     // ingredient vs ingredient: points repel as circles
@@ -329,7 +336,7 @@ function step() {
           if (wa) { p.st = Math.max(p.st || 0, st); p.nx = (p.nx || 0) - nx; p.ny = (p.ny || 0) - ny; }
           if (wc) { q.st = Math.max(q.st || 0, st); q.nx = (q.nx || 0) + nx; q.ny = (q.ny || 0) + ny; }
         }
-        if (A === current && C.frozen && dy > md * 0.5) support(p); else if (C === current && A.frozen && dy < -md * 0.5) support(q);
+        if (C.frozen && dy > md * 0.5) support(A,p); else if (A.frozen && dy < -md * 0.5) support(C,q);
       }
     }
   }
@@ -357,37 +364,30 @@ function step() {
     vx /= b.pts.length; vy /= b.pts.length;
     for (const p of b.pts) { p.px += (p.x - p.px - vx) * b.type.damp; p.py += (p.y - p.py - vy) * b.type.damp; }
   }
-  if (current) {
-    if (panTouch) { current.inPan = true; current.air = 0; } else current.air++;
-    const was = current.thrown;
-    current.thrown = current.inPan && current.air > 3;
-    if (current.thrown && !was) { settle = 0; flight = 0; }
+  // 같은 차례의 조각도 서로 연결하지 않고 각각 접촉·낙하·정착을 판단합니다.
+  for(const b of turnBodies)if(!b.frozen&&!b.missed&&!b.hanging) {
+    if(b.panTouch){b.inPan=true;b.air=0;}else b.air++;
+    b.thrown=b.inPan&&b.air>3;b.flight++;
   }
-  // any ingredient falling off the bottom ends the game
-  // fallen = the whole piece is below the bottom edge (a tip hanging off-screen doesn't count)
-  const fallen = bodies.filter(b => !b.frozen && b.pts.every(p => p.y > camY + H + FALL_MARGIN));
-  if (fallen.length) {
-    lives -= 1;
-    if (lives <= 0) { over = true; current = null; panDrag = null; finish(); return; }
-    // a life is spent: the fallen piece is gone, play continues with the next one
-    bodies = bodies.filter(b => !fallen.includes(b));
-    if (fallen.includes(current)) current = null;
+  const fallen=turnBodies.filter(b=>!b.frozen&&!b.missed&&!b.hanging&&b.pts.every(p=>p.y>camY+H+FALL_MARGIN));
+  if(fallen.length) {
+    for(const b of fallen)b.missed=true;
+    bodies=bodies.filter(b=>!fallen.includes(b));
+    // 한 묶음에서 여러 조각을 놓쳐도 목숨은 한 번만 줄어듭니다.
+    if(!turnMissed){lives--;turnMissed=true;}
+    if(lives<=0){over=true;current=null;panDrag=null;panKey=false;finish();return;}
   }
-  // when the thrown ingredient settles (or times out), the next one appears
-  if (current && current.thrown) {
-    flight++;
-    let maxV = 0;
-    for (const p of current.pts) maxV = Math.max(maxV, Math.hypot(p.x - p.px, p.y - p.py));
-
-    const cx = current.pts.reduce((s, p) => s + p.x, 0) / current.pts.length;
-    const touching = supL <= supR, supported = touching && cx >= supL && cx <= supR;
-    settle = supported && maxV < SETTLE_V ? settle + 1 : 0;
-    if (settle > SETTLE_FRAMES || (flight > SETTLE_TIMEOUT && touching)) {
-      current.frozen = true; current = null;
-      updateLabels(); updateCamera(); updatePan();
+  for(const b of turnBodies)if(!b.frozen&&!b.missed&&!b.hanging) {
+    let maxV=0;for(const p of b.pts)maxV=Math.max(maxV,Math.hypot(p.x-p.px,p.y-p.py));
+    const cx=b.pts.reduce((sum,p)=>sum+p.x,0)/b.pts.length;
+    const touching=b.supL<=b.supR,supported=touching&&cx>=b.supL&&cx<=b.supR;
+    b.settle=supported&&maxV<SETTLE_V?b.settle+1:0;
+    if(b.settle>SETTLE_FRAMES||(b.flight>SETTLE_TIMEOUT&&touching)){
+      b.frozen=true;for(const p of b.pts){p.px=p.x;p.py=p.y;}updateLabels();
     }
   }
-  if (!current) spawn();
+  if(turnBodies.every(b=>b.frozen||b.missed)){updateLabels();updateCamera();updatePan();spawn();}
+
 }
 
 function finish() {
@@ -555,8 +555,8 @@ function drawWorld() {
 // bisector at each joint, so neighbouring slices meet exactly: no gaps and no corners poking out.
 
 
-function drawStrip(pts0, im, h, seg, ext, off = 0) {
-  const n = pts0.length, segs = n - 1, ov = 8, half = h / 2, o = off / half;
+function drawStrip(pts0, im, h, seg, ext, off = 0, overlap = 8) {
+  const n = pts0.length, segs = n - 1, ov = overlap, half = h / 2, o = off / half;
   const pts = pts0.slice();
   for (const [e, f] of [[0, 1], [n - 1, n - 2]]) {
     const a = pts0[e], b = pts0[f], l = Math.hypot(a.x - b.x, a.y - b.y) || 1;
@@ -636,48 +636,91 @@ function drawOnionRing(x,y,rx,ry,angle) {
   ctx.restore();
 }
 function drawShrimp() {
-  // 굽은 몸통은 끝으로 갈수록 가늘어지며, 몸통마다 부드러운 마디가 있습니다.
-  const start=-0.6,end=4.2,outer=[],inner=[];
-  for(let i=0;i<=32;i++){const u=i/32,q=start+(end-start)*u,rx=7.8,ry=5.2,w=3.5-1.7*u;outer.push({x:Math.cos(q)*(rx+w),y:Math.sin(q)*(ry+w)});inner.push({x:Math.cos(q)*(rx-w),y:Math.sin(q)*Math.max(1,ry-w)});}
-  const fill=ctx.createLinearGradient(-3,-9,3,9);fill.addColorStop(0,'#ffe2b7');fill.addColorStop(0.32,'#f7c28f');fill.addColorStop(0.68,'#e99a68');fill.addColorStop(1,'#be6841');
-  ctx.beginPath();outer.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));inner.reverse().forEach(p=>ctx.lineTo(p.x,p.y));ctx.closePath();ctx.fillStyle=fill;ctx.fill();ctx.lineWidth=1.05;ctx.strokeStyle='#985737';ctx.stroke();
-  for(let j=0;j<6;j++){const u=(j+0.6)/7,q=start+(end-start)*u,w=3.5-1.7*u;ctx.beginPath();ctx.moveTo(Math.cos(q)*(7.8-w),Math.sin(q)*Math.max(1,5.2-w));ctx.quadraticCurveTo(Math.cos(q+0.1)*8,Math.sin(q+0.1)*5.2,Math.cos(q)*(7.8+w),Math.sin(q)*(5.2+w));ctx.strokeStyle='#d78a59';ctx.lineWidth=0.8;ctx.stroke();}
-  ctx.beginPath();ctx.ellipse(-0.4,-0.4,8.1,5.1,0,0.3,2.5);ctx.strokeStyle='rgba(255,245,218,0.8)';ctx.lineWidth=1.1;ctx.stroke();
-  // 작은 꼬리는 둥근 두 갈래 지느러미로 표현합니다.
-  ctx.beginPath();ctx.moveTo(-4.6,-5.4);ctx.quadraticCurveTo(-11,-11,-10,-4);ctx.quadraticCurveTo(-14,-4,-10,0);ctx.quadraticCurveTo(-7,-1,-4.6,-5.4);ctx.fillStyle='#df9361';ctx.fill();ctx.strokeStyle='#9d5d39';ctx.lineWidth=0.9;ctx.stroke();
-  ctx.beginPath();ctx.moveTo(-6,-5);ctx.lineTo(-10,-3);ctx.strokeStyle='#fbd3a1';ctx.lineWidth=0.9;ctx.stroke();
+  const start=-1.05,end=4.03,outer=[],inner=[];
+  for(let i=0;i<=48;i++){
+    const u=i/48,q=start+(end-start)*u,w=2.05+2.4*u+Math.sin(u*Math.PI*12)*0.12;
+    outer.push({x:Math.cos(q)*(7.2+w),y:Math.sin(q)*(8+w)});
+    inner.push({x:Math.cos(q)*(7.2-w),y:Math.sin(q)*(8-w)});
+  }
+  const flesh=ctx.createLinearGradient(-8,-11,9,11);
+  flesh.addColorStop(0,'#fff0d8');flesh.addColorStop(0.25,'#ffd2af');flesh.addColorStop(0.58,'#f69865');flesh.addColorStop(0.83,'#f37d42');flesh.addColorStop(1,'#d35d2d');
+  ctx.beginPath();outer.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));inner.reverse().forEach(p=>ctx.lineTo(p.x,p.y));ctx.closePath();ctx.fillStyle=flesh;ctx.fill();ctx.lineWidth=0.8;ctx.strokeStyle='#ce7549';ctx.stroke();
+  for(let j=1;j<=5;j++){
+    const u=j/6,q=start+(end-start)*u,w=2.05+2.4*u;
+    ctx.beginPath();ctx.moveTo(Math.cos(q)*(7.2-w),Math.sin(q)*(8-w));
+    ctx.quadraticCurveTo(Math.cos(q+0.12)*8,Math.sin(q+0.12)*8,Math.cos(q)*(7.2+w),Math.sin(q)*(8+w));
+    ctx.lineWidth=0.9;ctx.strokeStyle='rgba(213,103,54,0.65)';ctx.stroke();
+    const q2=q-0.045;ctx.beginPath();ctx.moveTo(Math.cos(q2)*(7.2-w+0.4),Math.sin(q2)*(8-w+0.4));ctx.quadraticCurveTo(Math.cos(q2+0.08)*8,Math.sin(q2+0.08)*8,Math.cos(q2)*(7.2+w-0.5),Math.sin(q2)*(8+w-0.5));ctx.strokeStyle='rgba(255,233,211,0.7)';ctx.lineWidth=0.6;ctx.stroke();
+  }
+  ctx.beginPath();ctx.ellipse(0,0,8.4,9.1,0,0.3,2.3);ctx.strokeStyle='rgba(255,248,230,0.8)';ctx.lineWidth=1;ctx.stroke();
+  const tail=ctx.createLinearGradient(4,-15,11,-7);tail.addColorStop(0,'#d34f23');tail.addColorStop(0.5,'#ef783b');tail.addColorStop(1,'#faad6f');
+  ctx.beginPath();ctx.moveTo(3.4,-7.8);ctx.bezierCurveTo(1,-11,2,-15,4,-16);ctx.quadraticCurveTo(7,-15,8,-12);ctx.quadraticCurveTo(12,-15,13,-13);ctx.quadraticCurveTo(15,-9,7,-6);ctx.closePath();ctx.fillStyle=tail;ctx.fill();ctx.strokeStyle='#c96837';ctx.lineWidth=0.65;ctx.stroke();
+  ctx.beginPath();ctx.moveTo(5,-13);ctx.quadraticCurveTo(5,-10,6,-9);ctx.strokeStyle='#ffdbb1';ctx.lineWidth=0.8;ctx.stroke();
 }
-function drawPickle(x,y,angle) {
-  ctx.save();ctx.translate(x,y);ctx.rotate(angle);
-  ctx.beginPath();ctx.ellipse(0,1.2,22,9.5,0,0,Math.PI*2);ctx.fillStyle='#536b24';ctx.fill();ctx.lineWidth=1.3;ctx.strokeStyle='#405522';ctx.stroke();
-  const flesh=ctx.createRadialGradient(-5,-3,2,0,0,23);flesh.addColorStop(0,'#e1df8c');flesh.addColorStop(0.55,'#bfc96b');flesh.addColorStop(1,'#7e9a39');
-  ctx.beginPath();ctx.ellipse(0,-0.9,21,8.3,0,0,Math.PI*2);ctx.fillStyle=flesh;ctx.fill();ctx.lineWidth=1.4;ctx.strokeStyle='#69822e';ctx.stroke();
-  ctx.beginPath();ctx.ellipse(0,-1,17,5.9,0,0,Math.PI*2);ctx.strokeStyle='#a7b652';ctx.lineWidth=0.7;ctx.stroke();
-  for(let i=0;i<9;i++){const q=i*Math.PI*2/9,px=Math.cos(q)*9,py=Math.sin(q)*3.5-1;ctx.beginPath();ctx.ellipse(px,py,2.3,0.85,q*0.3,0,Math.PI*2);ctx.fillStyle='#f5e8ac';ctx.fill();ctx.lineWidth=0.45;ctx.strokeStyle='#b6b668';ctx.stroke();}
-  for(let i=0;i<17;i++){const q=i*2.4,r=13+(i%3)*2;ctx.beginPath();ctx.ellipse(Math.cos(q)*r,Math.sin(q)*5.6-1,0.55,0.38,0,0,Math.PI*2);ctx.fillStyle=i%2?'#8caa46':'#d3d77d';ctx.fill();}
-  ctx.beginPath();ctx.ellipse(-2,-2.2,17,5.4,0,Math.PI*1.05,Math.PI*1.78);ctx.strokeStyle='rgba(255,248,198,0.65)';ctx.lineWidth=1;ctx.stroke();ctx.restore();
+function picklePath(dy=0) {
+  ctx.beginPath();ctx.moveTo(-15,dy-2);
+  ctx.bezierCurveTo(-14,dy-8,-7,dy-10,-2,dy-8.6);
+  ctx.bezierCurveTo(3,dy-10,13,dy-8,15,dy-3);
+  ctx.bezierCurveTo(18,dy+2,12,dy+8,7,dy+8.4);
+  ctx.bezierCurveTo(1,dy+7,-2,dy+10,-8,dy+8);
+  ctx.bezierCurveTo(-14,dy+7,-18,dy+3,-15,dy-2);ctx.closePath();
+}
+function drawPickle() {
+  picklePath(2);const rind=ctx.createLinearGradient(0,0,0,11);rind.addColorStop(0,'#8d9d35');rind.addColorStop(1,'#586c23');ctx.fillStyle=rind;ctx.fill();ctx.strokeStyle='#405321';ctx.lineWidth=1;ctx.stroke();
+  picklePath();const flesh=ctx.createLinearGradient(-8,-9,9,8);flesh.addColorStop(0,'#e6f286');flesh.addColorStop(0.5,'#c6d95d');flesh.addColorStop(1,'#a9bd45');ctx.fillStyle=flesh;ctx.fill();
+  ctx.save();picklePath();ctx.clip();ctx.rotate(0.18);
+  for(let y=-12;y<=12;y+=4.2){ctx.beginPath();for(let x=-20;x<=20;x++){const yy=y+Math.sin(x*2.7+y)*0.14;if(x===-20)ctx.moveTo(x,yy);else ctx.lineTo(x,yy);}ctx.strokeStyle=y%2?'#dcea79':'#dae978';ctx.lineWidth=1.8;ctx.stroke();}
+  ctx.restore();picklePath();ctx.strokeStyle='#526524';ctx.lineWidth=0.9;ctx.stroke();
+  ctx.beginPath();ctx.moveTo(-11,-5);ctx.quadraticCurveTo(-5,-9,1,-7);ctx.strokeStyle='rgba(255,255,199,0.7)';ctx.lineWidth=0.8;ctx.stroke();
+}
+// 한 조각의 그림을 한 번 만든 뒤, 기존 재료와 동일하게 분할해 물리 점을 따라 그립니다.
+const ingredientSprites=new Map();
+function specialSprite(type) {
+  const key=type.onion?'onion':type.shrimp?'shrimp':'pickle';
+  if(ingredientSprites.has(key))return ingredientSprites.get(key);
+  const canvas=document.createElement('canvas');canvas.width=144;canvas.height=144;
+  const saved=ctx;ctx=canvas.getContext('2d');ctx.translate(72,72);ctx.scale(3,-3);
+  if(type.onion)drawOnionRing(0,0,18,7.3,0);
+  else if(type.shrimp)drawShrimp();else drawPickle();
+  ctx=saved;canvas.naturalWidth=canvas.width;canvas.naturalHeight=canvas.height;
+  // 좌우·상하 여백은 원본 그림의 크기에 맞춰 잘라냅니다.
+  const cropped=document.createElement('canvas');
+  const region=type.onion?[10,38,124,66]:type.shrimp?[27,21,96,108]:[18,33,108,75];
+  cropped.width=region[2];cropped.height=region[3];cropped.getContext('2d').drawImage(canvas,...region,0,0,cropped.width,cropped.height);
+  cropped.naturalWidth=cropped.width;cropped.naturalHeight=cropped.height;
+  ingredientSprites.set(key,cropped);return cropped;
 }
 function drawSpecialIngredient(b) {
-  const pts=b.pts;
-  if(b.type.shrimp) {
-    for(let i=0;i<3;i++) {
-      const p=ingredientPoint(pts,0.17+i*0.33),left=ingredientPoint(pts,Math.max(0,0.08+i*0.33)),right=ingredientPoint(pts,Math.min(1,0.26+i*0.33));
-      const curve=Math.sin(right.angle-left.angle);
-      ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.angle+(i-1)*0.12);ctx.transform(1,curve*0.12,0,0.95+Math.min(0.12,Math.abs(curve)*0.12),0,0);drawShrimp();ctx.restore();
-    }
-    return;
-  }
-  const p=ingredientPoint(pts,0.5);ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.angle);
-  if(b.type.onion) {
-    drawOnionRing(-17,1.4,20,6.5,-0.12);
-    drawOnionRing(15,0.8,23,7.5,0.13);
-    drawOnionRing(0,-2,16,5.7,-0.08);
-    drawOnionRing(11,1.5,9.5,3.8,0.18);
-  } else if(b.type.pickle) {
-    drawPickle(-16,-1.2,-0.14);drawPickle(16,1.5,0.16);
-  }
-  ctx.restore();
+  const t=b.type,im=specialSprite(t),w=(t.n-1)*t.seg+t.thick;
+  const h=w*im.naturalHeight/im.naturalWidth;
+  drawSoftImage(b.pts,im,h,t.seg,t.thick/2,Math.min(0,(t.thick-h)/2));
 }
+
+// 작은 조각의 높은 그림도 이음새 없이 휘도록 삼각형 격자로 변형합니다.
+function drawSoftImage(points,image,h,seg,ext,off) {
+  const pts=points.map(p=>({x:p.x,y:p.y})),n=pts.length;
+  for(const [i,j] of [[0,1],[n-1,n-2]]){const a=points[i],b=points[j],len=Math.hypot(a.x-b.x,a.y-b.y)||1;pts[i]={x:a.x+(a.x-b.x)/len*ext,y:a.y+(a.y-b.y)/len*ext};}
+  const vertices=pts.map((p,i)=>{const a=pts[Math.max(0,i-1)],b=pts[Math.min(n-1,i+1)],len=Math.hypot(b.x-a.x,b.y-a.y)||1,nx=-(b.y-a.y)/len,ny=(b.x-a.x)/len;return [{x:p.x+nx*(h/2+off),y:p.y+ny*(h/2+off)},{x:p.x-nx*(h/2-off),y:p.y-ny*(h/2-off)}];});
+  const total=(n-1)*seg+2*ext;
+  const u=i=>i===0?0:i===n-1?image.width:(ext+i*seg)/total*image.width;
+  for(let i=0;i<n-1;i++) {
+    const a=vertices[i],b=vertices[i+1],x=u(i),z=u(i+1),H=image.height;
+    textureTriangle(image,[[x,0],[z,0],[x,H]],[a[0],b[0],a[1]]);
+    textureTriangle(image,[[z,0],[z,H],[x,H]],[b[0],b[1],a[1]]);
+  }
+}
+function textureTriangle(image,s,d) {
+  const u1=s[1][0]-s[0][0],v1=s[1][1]-s[0][1],u2=s[2][0]-s[0][0],v2=s[2][1]-s[0][1],det=u1*v2-u2*v1;
+  if(Math.abs(det)<0.0001)return;
+  const x1=d[1].x-d[0].x,y1=d[1].y-d[0].y,x2=d[2].x-d[0].x,y2=d[2].y-d[0].y;
+  const a=(x1*v2-x2*v1)/det,b=(y1*v2-y2*v1)/det,c=(x2*u1-x1*u2)/det,e=(y2*u1-y1*u2)/det;
+  const tx=d[0].x-a*s[0][0]-c*s[0][1],ty=d[0].y-b*s[0][0]-e*s[0][1];
+  const center={x:(d[0].x+d[1].x+d[2].x)/3,y:(d[0].y+d[1].y+d[2].y)/3};
+  ctx.save();ctx.beginPath();
+  d.forEach((p,i)=>{const dx=p.x-center.x,dy=p.y-center.y,len=Math.hypot(dx,dy)||1,x=p.x+dx/len*0.15,y=p.y+dy/len*0.15;if(i)ctx.lineTo(x,y);else ctx.moveTo(x,y);});
+  ctx.closePath();ctx.clip();ctx.transform(a,b,c,e,tx,ty);ctx.drawImage(image,0,0);ctx.restore();
+}
+
 function strokeRope(pts, w, color) {
   ctx.strokeStyle = color; ctx.lineWidth = Math.max(1, w);
   ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
